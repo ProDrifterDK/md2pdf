@@ -5,15 +5,17 @@
 
 ## **1\. Executive Overview: The Cross-Platform Imperative**
 
-The software development landscape has witnessed a profound convergence between mobile and web ecosystems, driven by the necessity for operational efficiency and design consistency. The user's objective—to translate an existing Storybook library architected for React Native (specifically utilizing the Expo runtime) into a React Web environment—represents a classic architectural challenge in this domain: the reconciliation of the Native Bridge with the Document Object Model (DOM).  
-The source repository, characterized by its reliance on React Native and likely leveraging libraries such as react-native-paper, exists within a paradigm where User Interface (UI) primitives are strictly defined (e.g., \<View\>, \<Text\>, \<Image\>). The target environment, the modern web, operates on a fundamentally different set of primitives (semantic HTML tags like \<div\>, \<span\>, \<header\>) and layout engines (CSS Flexbox/Grid versus the Yoga layout engine used in React Native).  
+The software development landscape has witnessed a profound convergence between mobile and web ecosystems, driven by the necessity for operational efficiency and design consistency. The objective to translate an existing Storybook library architected for React Native (specifically utilizing the Expo runtime) into a React Web environment—represents a classic architectural challenge in this domain: the reconciliation of the Native Bridge with the Document Object Model (DOM).  
+The source repository, characterized by its reliance on React Native and likely leveraging libraries such as react-native-paper, exists within a paradigm where User Interface (UI) primitives are strictly defined (e.g., `<View>`, `<Text>`, `<Image>`). The target environment, the modern web, operates on a fundamentally different set of primitives (semantic HTML tags like `<div>`, `<span>`, `<header>`) and layout engines (CSS Flexbox/Grid versus the Yoga layout engine used in React Native).
 This report provides an exhaustive analysis of three distinct architectural strategies to achieve this translation, ranging from runtime emulation to compile-time optimization. These strategies are evaluated not merely on their immediate feasibility, but on their long-term implications for performance, maintainability, and scalability within an enterprise context.
 
 1. **Runtime Adaptation (React Native for Web):** A low-friction implementation leveraging aliasing and compatibility layers to render Native code in the browser via React DOM.  
 2. **Universal Design System (Tamagui / Unistyles / Gluestack):** A refactoring-heavy approach that adopts "Universal" libraries capable of optimizing output for specific targets (Native vs. Web) at build time.  
 3. **Framework-Agnostic Compilation (Mitosis):** A transformative approach utilizing static analysis to compile a single source of truth into distinct, framework-native codebases (React Native and React DOM) with zero runtime overhead.
+4. **Manual Counterpart Creation (The "Twin" Strategy):** A pragmatic, labor-intensive approach involving the creation of distinct, parallel React components for the web that mirror the API and behavior of their React Native counterparts, allowing for maximum platform optimization without abstraction layers.
 
-Furthermore, this analysis extends into the critical supporting infrastructure required to sustain such a migration, specifically the implementation of Monorepo architectures (Turborepo, Nx) and the integration of modern build tools (Vite) within the Storybook 8 ecosystem.  
+Furthermore, this analysis extends into the critical supporting infrastructure required to sustain such a migration, specifically the implementation of Monorepo architectures (Turborepo, Nx) and the integration of modern build tools (Vite) within the Storybook 8 ecosystem.
+
 ---
 
 ## **2\. Strategy 1: Runtime Adaptation via React Native for Web**
@@ -22,23 +24,28 @@ The most immediate and least invasive path for migrating a React Native Storyboo
 
 ### **2.1 The Mechanics of Runtime Translation**
 
-React Native for Web (RNW) operates as an interoperability layer. When a developer writes \<View\> in React Native, the bundler is instructed via aliasing to resolve this import not to the native iOS/Android implementation, but to a web-compatible implementation located in react-native-web.
+React Native for Web (RNW) operates as an interoperability layer. When a developer writes `<View>` in React Native, the bundler is instructed via aliasing to resolve this import not to the native iOS/Android implementation, but to a web-compatible implementation located in react-native-web.
 
 #### **2.1.1 The Rendering Pipeline and Atomic CSS**
 
-The core of RNW’s web implementation is its styling engine. React Native relies on the Yoga layout engine to calculate flexbox layouts. RNW emulates this behavior in the browser by generating **Atomic CSS**. Unlike traditional CSS where a class might contain multiple declarations (e.g., .card { padding: 10px; background: white; }), Atomic CSS generates a unique class for every single style property-value pair.1  
-For example, a \<View style={{ padding: 10, flexDirection: 'row' }}\> might render in the DOM as:  
-\<div class="r-padding-10 r-flexDirection-row"\>  
+The core of RNW’s web implementation is its styling engine. React Native relies on the Yoga layout engine to calculate flexbox layouts. RNW emulates this behavior in the browser by generating **Atomic CSS**. Unlike traditional CSS where a class might contain multiple declarations (e.g., `.card { padding: 10px; background: white; }`), Atomic CSS generates a unique class for every single style property-value pair.1
+
+For example, a `<View style={{ padding: 10, flexDirection: 'row' }}>` might render in the DOM as:
+`<div class="r-padding-10 r-flexDirection-row">`
 This approach ensures determinism and reduces the specificity wars common in CSS development. However, it introduces a runtime cost: the JavaScript thread must calculate these styles and inject them into the document head during hydration. For large Storybook libraries with complex, interactive components, this can lead to a phenomenon known as "div soup," where the DOM depth becomes excessive due to the need to emulate native view nesting.2
 
-**Context Note for `av-ui-library`:**
+**Context Note for av-ui-library:**
 The **`AVCart`** component, with its deep nesting of `View` elements (SeriesContainer -> SeriesHeader -> Ticket -> InfoContainer), is a primary candidate for this "div soup" phenomenon. This can lead to hydration performance issues on the web if not optimized.
 
 #### **2.1.2 Integration with React Native Paper**
 
-Given the reliance on react-native-paper, this strategy benefits from strong library support. React Native Paper (v5 and above) explicitly supports React Native Web and implements Material Design 3 (Material You) standards.4  
-However, implementation nuances exist. Paper’s support for "Material You" involves dynamic color adaptations that may require specific web configurations to mirror the Android implementation correctly.4 The library exposes a version prop in its theme configuration, allowing developers to toggle between Material Design 2 and 3\.7  
+Given the reliance on react-native-paper, this strategy benefits from strong library support. React Native Paper (v5 and above) explicitly supports React Native Web and implements Material Design 3 (Material You) standards.4
+However, implementation nuances exist. Paper’s support for "Material You" involves dynamic color adaptations that may require specific web configurations to mirror the Android implementation correctly.4 The library exposes a version prop in its theme configuration, allowing developers to toggle between Material Design 2 and 3\.7
 **Architectural Implication:** While react-native-paper claims web support, it treats the web as a secondary target. Research indicates that specific interactive elements, such as the Floating Action Button (FAB) and keyboard avoidance behaviors, frequently exhibit visual regressions on the web (e.g., z-index failures or layout overlaps) that do not manifest on native platforms.8 This suggests that while the *code* runs, the *fidelity* requires manual quality assurance and CSS overrides.
+
+**Web Asset Management (Fonts & Icons):**
+A critical gap in the "Runtime Adaptation" strategy is asset loading. React Native links fonts (like `MaterialCommunityIcons` used by Paper) natively. On the web, these must be injected via CSS `@font-face`.
+*   **Action:** The `av-ui-library` must implement a strategy to inject the MaterialCommunityIcons font file into the web head (e.g., inside `.storybook/preview.js` or a global `AppWrapper`). Without this, web components will render "tofu" (empty squares) instead of icons.
 
 ### **2.2 Bundler Configuration: The Vite Transition**
 
@@ -50,27 +57,27 @@ To operationalize this strategy in a modern stack, the vite-plugin-react-native-
 Configuration Example for Storybook (.storybook/main.ts):  
 The configuration must explicitly invoke the React framework and apply the RNW aliases.
 
-TypeScript
-
+```typescript
 import type { StorybookConfig } from "@storybook/react-vite";
 
-const config: StorybookConfig \= {  
-  framework: {  
-    name: "@storybook/react-vite",  
-    options: {  
-      builder: {  
-        viteConfigPath: '.storybook/vite.config.ts',  
-      },  
-    },  
-  },  
-  addons: \[  
-    "@storybook/addon-react-native-web", // Critical addon for alias handling  
-    "@storybook/addon-essentials"  
-  \],  
-  // Explicitly separate the native stories if necessary  
-  stories: \["../src/\*\*/\*.stories.@(js|jsx|ts|tsx)"\],  
-};  
+const config: StorybookConfig = {
+  framework: {
+    name: "@storybook/react-vite",
+    options: {
+      builder: {
+        viteConfigPath: '.storybook/vite.config.ts',
+      },
+    },
+  },
+  addons: [
+    "@storybook/addon-react-native-web", // Critical addon for alias handling
+    "@storybook/addon-essentials"
+  ],
+  // Explicitly separate the native stories if necessary
+  stories: ["../src/**/*.stories.@(js|jsx|ts|tsx)"],
+};
 export default config;
+```
 
 This configuration leverages @storybook/addon-react-native-web to inject the necessary Babel plugins and Webpack/Vite aliases automatically.11
 
@@ -80,7 +87,7 @@ This configuration leverages @storybook/addon-react-native-web to inject the nec
 | :---- | :---- |
 | **Velocity** | **High.** This is the path of least resistance. It honors the "Write Once, Run Anywhere" philosophy by requiring near-zero changes to the component source code.1 |
 | **Fidelity** | **Variable.** While static components render well, complex interactions involving gestures or native APIs (Haptics, Camera) require distinct web polyfills or conditional logic, breaking the abstraction.2 |
-| **SEO & Semantics** | **Low.** RNW renders \<View\> as \<div\> by default. Accessibility requires manual mapping (e.g., accessibilityRole="heading" \-\> \<h1\>). Without this, the web output is opaque to screen readers and search engines.1 |
+| **SEO & Semantics** | **Low.** RNW renders `<View>` as `<div>` by default. Accessibility requires manual mapping (e.g., `accessibilityRole="heading"` -> `<h1>`). Without this, the web output is opaque to screen readers and search engines.1 |
 | **Performance** | **Moderate.** The runtime overhead of Atomic CSS generation and the large bundle size (rendering engine \+ logic) makes this suboptimal for high-performance public-facing websites, though acceptable for internal dashboards or B2B apps.2 |
 
 ---
@@ -95,7 +102,7 @@ The second architectural approach rejects the notion of "porting" or "adapting" 
 
 #### **3.1.1 Mechanism of Action**
 
-When a developer uses a Tamagui \<Stack\> or \<Button\>, the compiler attempts to resolve the styles at build time.
+When a developer uses a Tamagui `<Stack>` or `<Button>`, the compiler attempts to resolve the styles at build time.
 
 * **Native Output:** The compiler outputs standard React Native Views, preserving the exact behavior expected by the native bridge.  
 * **Web Output:** The compiler removes the JavaScript style objects entirely, replacing them with hashed CSS class names. This significantly reduces the main thread workload, addressing the "div soup" and hydration performance issues inherent in RNW.15
@@ -122,20 +129,22 @@ Unistyles leverages the JavaScript Interface (JSI) to bind directly to the nativ
 
 The research identifies react-native-extended-stylesheet as a deprecated library that may exist in older repos.24 Unistyles provides a direct migration path because it mimics the StyleSheet.create syntax.
 
-* **Refactoring Pattern:** The StyleSheet.create calls remain largely the same, but dynamic values are handled via functions.  
-  TypeScript  
-  // Legacy  
-  const styles \= EStyleSheet.create({ width: '100%' });
+* **Refactoring Pattern:** The StyleSheet.create calls remain largely the same, but dynamic values are handled via functions.
 
-  // Unistyles  
-  const styles \= StyleSheet.create(theme \=\> ({  
-    width: '100%',  
-    backgroundColor: theme.colors.background  
-  }));
+```typescript
+// Legacy
+const styles = EStyleSheet.create({ width: '100%' });
+
+// Unistyles
+const styles = StyleSheet.create(theme => ({
+  width: '100%',
+  backgroundColor: theme.colors.background
+}));
+```
 
   This API parity makes Unistyles the most efficient refactoring target for maintaining the existing code structure while gaining modern web capabilities.19
 
-**Context Note for `av-ui-library`:**
+**Context Note for av-ui-library:**
 The repository heavily uses `react-native-extended-stylesheet` (e.g., `EStyleSheet.build` in `App.js`, `EStyleSheet.create` in `AVRadioCards`). This library is deprecated. **Unistyles** provides a direct migration path as shown above. Refactoring `AVRadioCards` to use Unistyles would immediately improve web performance by generating native CSS media queries instead of relying on JS-driven layout changes.
 
 ### **3.3 Gluestack UI (The NativeBase Evolution)**
@@ -161,9 +170,9 @@ The third strategy represents a radical departure from the "Runtime" (Strategy 1
 
 Mitosis parses a specific subset of JSX (often called "Lite JSX") into a JSON-based Abstract Syntax Tree (AST). This intermediate representation (the Mitosis Component JSON) is then fed into serializers that output code for different frameworks.32
 
-* **Input:** A .lite.tsx file using a restricted set of hooks (useStore, useMetadata).  
-* **Output 1 (Web):** A React component using \<div\>, className, and CSS modules.  
-* **Output 2 (Mobile):** A React Native component using \<View\>, style, and StyleSheet.
+* **Input:** A `.lite.tsx` file using a restricted set of hooks (`useStore`, `useMetadata`).
+* **Output 1 (Web):** A React component using `<div>`, `className`, and CSS modules.
+* **Output 2 (Mobile):** A React Native component using `<View>`, `style`, and `StyleSheet`.
 
 ### **4.2 Architectural Implications for Storybook**
 
@@ -188,44 +197,111 @@ Mitosis handles platform divergence via the useMetadata hook. This allows develo
 
 ---
 
-## **5\. Infrastructure and Tooling: Supporting the Migration**
+## **5\. Strategy 4: Manual Counterpart Creation (The "Twin" Strategy)**
+
+While the previous strategies focus on code sharing or compilation, the **Manual Counterpart Creation** strategy accepts the fundamental differences between platforms and addresses them through duplication rather than abstraction. This approach involves creating a dedicated `.web.tsx` file for every component, implementing the UI using standard React DOM primitives (`<div>`, `<span>`, CSS Modules/Tailwind) while maintaining an identical prop interface to the React Native version.
+
+### **5.1 The Pattern: Platform-Specific Extensions**
+
+React Native's bundler (Metro) and modern web bundlers (Webpack/Vite) support platform-specific file extensions. This allows for a clean separation of concerns where the consumer imports `Button`, and the bundler resolves the correct file based on the target platform.
+
+*   `Button.tsx` (or `Button.native.tsx`): Contains the React Native implementation using `<View>` and `StyleSheet`.
+*   `Button.web.tsx`: Contains the React DOM implementation using `<div>` and CSS.
+
+#### **5.1.1 Implementation Workflow**
+
+1.  **Interface Definition:** Define a shared TypeScript interface for the component props in a separate file (e.g., `Button.types.ts`). This ensures that both the web and native versions adhere to the same contract.
+2.  **Native Implementation:** Build the mobile component using standard React Native patterns.
+3.  **Web Implementation:** Build the web component using pure HTML/CSS or a web-first library (like Material UI or Headless UI).
+4.  **Barrel Export:** In `index.ts`, simply export the component. The bundler handles the rest.
+
+```typescript
+// Button.types.ts
+export interface ButtonProps {
+  label: string;
+  onPress: () => void;
+  variant?: 'primary' | 'secondary';
+}
+
+// Button.native.tsx
+import { TouchableOpacity, Text } from 'react-native';
+import { ButtonProps } from './Button.types';
+
+export const Button = ({ label, onPress }: ButtonProps) => (
+  <TouchableOpacity onPress={onPress}>
+    <Text>{label}</Text>
+  </TouchableOpacity>
+);
+
+// Button.web.tsx
+import { ButtonProps } from './Button.types';
+import './Button.css'; // Standard CSS
+
+export const Button = ({ label, onPress }: ButtonProps) => (
+  <button className="btn" onClick={onPress}>
+    {label}
+  </button>
+);
+```
+
+### **5.2 Pros and Cons: The Twin Strategy**
+
+| Dimension | Analysis |
+| :---- | :---- |
+| **Optimization** | **Maximum.** Since the web code is written specifically for the DOM, it can leverage all web-specific features (CSS Grid, hover states, accessibility attributes) without any bridge overhead or emulation quirks. |
+| **Maintainability** | **Low.** This violates the DRY (Don't Repeat Yourself) principle. Every feature request or bug fix potentially requires changes in two separate files. Divergence between platforms is a constant risk. |
+| **Dependencies** | **Decoupled.** The web version doesn't need `react-native-web` or heavy compatibility libraries. It can use standard web packages, keeping the bundle size minimal. |
+| **Migration Effort** | **High.** It requires writing every component twice. However, for complex components where `react-native-web` fails (like maps or complex gestures), this might be the *only* viable option. |
+
+---
+
+## **6\. Infrastructure and Tooling: Supporting the Migration**
 
 Regardless of the chosen strategy, the operational success of this migration depends on the supporting infrastructure. The research strongly supports the implementation of a **Monorepo** and a unified **Navigation** strategy.
 
-### **5.1 Monorepo Architectures: Turborepo vs. Nx**
+### **6.1 Monorepo Architectures: Turborepo vs. Nx**
 
 Moving a standalone library to a monorepo structure enables the coexistence of the Native App, the Web App, and the Shared UI Library (Storybook).
 
-#### **5.1.1 Turborepo Implementation**
+#### **6.1.1 Turborepo Implementation**
 
 Turborepo is favored for its simplicity and pipeline caching capabilities. A typical structure for this migration would be:
 
-* apps/native: The Expo application.  
-* apps/web: The Next.js or Vite React web application.  
+* apps/native: The Expo application.
+* apps/web: The Next.js or Vite React web application.
 * packages/ui: The shared UI library containing the components and the Storybook configuration.35
 
 **Configuration:** Turborepo requires careful handling of "hoisted" dependencies. To make React Native work within a monorepo, the metro.config.js in the native app must be patched to resolve node\_modules from the workspace root, as Metro does not support symlinks by default.37
 
-#### **5.1.2 Nx Implementation**
+#### **6.1.2 Nx Implementation**
 
 Nx offers a more opinionated, "batteries-included" approach. It excels at dependency graph analysis and can automatically detect that changes in the ui library should trigger a rebuild of the web app.
 
-* **Project Crystal:** Nx's new inference engine simplifies the configuration, potentially automating the Metro/Webpack wiring that requires manual scripting in Turborepo.38  
+* **Project Crystal:** Nx's new inference engine simplifies the configuration, potentially automating the Metro/Webpack wiring that requires manual scripting in Turborepo.38
 * **Shared Libraries:** Nx allows for the creation of "local libraries" that can be imported via simple paths (e.g., @my-org/ui), handling the TypeScript path mapping automatically.39
 
-### **5.2 The Animation Conundrum**
+### **6.2 The Animation Conundrum**
 
 Animation represents the deepest fissure between the platforms.
 
-* **React Native:** Relies on Animated or react-native-reanimated (running on the UI thread via JSI).  
+* **React Native:** Relies on Animated or react-native-reanimated (running on the UI thread via JSI).
 * **Web:** Relies on CSS Transitions or Main Thread JS (framer-motion).
 
 **Reanimated 4.0** has introduced significant strides in bridging this gap by implementing a CSS Transition API that mirrors web standards, allowing for high-performance animations on web that don't block the JS thread.43 However, standard Animated API usage often results in poor web performance.
 
 * **Recommendation:** If using Strategy 2 (Universal), leverage the library's animation driver (e.g., @tamagui/animations-react-native) which abstracts this complexity. If using Strategy 1, prefer simple layout animations or accept the performance penalty of JS-driven animations on the web.44
 
-**Context Note for `av-ui-library`:**
+**Context Note for av-ui-library:**
 The **`AVSwitch`** component currently uses the native `Animated` API (`Animated.Value`, `Animated.spring`). For a high-fidelity web port, `AVSwitch` should be refactored to use **CSS Transitions** (via Unistyles or Tamagui) or `react-native-reanimated` (which has better web support) instead of the legacy `Animated` API.
+
+### **6.3 Navigation Decoupling**
+
+Components like `AVCart` often imply navigation flows (e.g., "Proceed to Checkout"). Hardcoding `react-navigation` (Native) or `react-router` (Web) creates a platform lock-in.
+
+*   **Link Injection Pattern:** The library should expose a `LinkComponent` prop in its provider or individual components.
+    *   *Native App* passes: `<Link to="/checkout" component={TouchableOpacity} />`
+    *   *Web App* passes: `<Link href="/checkout" component={a} />`
+    *   The library simply uses `props.LinkComponent` without knowing which router is active.
 
 ---
 
@@ -256,7 +332,7 @@ This roadmap combines Strategy 1 and Strategy 2 to balance immediate delivery wi
 4. Verify that Unistyles is generating CSS media queries on the web output.21  
 5. Repeat this process iteratively. This gradually replaces the runtime-heavy RNW styling with optimized Universal styling without breaking the app.
 
-**Context Note for `av-ui-library`:**
+**Context Note for av-ui-library:**
 For Phase 3, we should prioritize refactoring **`AVCart`** to break down its monolithic structure into smaller, semantic web components. Also, target the removal of `react-native-extended-stylesheet` from `App.js` and `AVRadioCards` by migrating to Unistyles.
 
 ### **6.2 The Total Rewrite (For Long-Term Products)**
@@ -264,37 +340,43 @@ For Phase 3, we should prioritize refactoring **`AVCart`** to break down its mon
 If the current codebase is legacy or technically indebted, a clean break may be preferable.
 
 1. Initialize a **Tamagui** Monorepo.46  
-2. Port components one by one from the old repo to the new packages/ui folder, rewriting them to use Tamagui primitives (\<Stack\>, \<Text\>) instead of react-native-paper.  
+2. Port components one by one from the old repo to the new packages/ui folder, rewriting them to use Tamagui primitives (`<Stack>`, `<Text>`) instead of react-native-paper.
 3. This approach yields the highest possible quality but halts feature development during the migration.14
 
 ---
 
 ## **7\. Comparison Summary**
 
-| Feature | Strategy 1: RNW Shim | Strategy 2: Universal (Tamagui/Unistyles) | Strategy 3: Mitosis Compiler |
-| :---- | :---- | :---- | :---- |
-| **Integration Difficulty** | **Low** (Config only) | **High** (Code rewrite required) | **Very High** (New syntax adoption) |
-| **React Native Paper** | Supported (Native) | Not Supported (Must replace) | Not Supported (Must rewrite) |
-| **Web Performance** | Moderate (Runtime CSS) | Excellent (Static CSS) | Best (Native DOM) |
-| **SEO / Accessibility** | Poor (Divs) | Good (Semantic Tags) | Best (Semantic Tags) |
-| **Build Complexity** | Low (Vite/Webpack) | High (Custom Compilers) | High (AST Serializers) |
+| Feature | Strategy 1: RNW Shim | Strategy 2: Universal (Tamagui/Unistyles) | Strategy 3: Mitosis Compiler | Strategy 4: Twin Components |
+| :---- | :---- | :---- | :---- | :---- |
+| **Integration Difficulty** | **Low** (Config only) | **High** (Code rewrite required) | **Very High** (New syntax adoption) | **Moderate** (Parallel dev) |
+| **React Native Paper** | Supported (Native) | Not Supported (Must replace) | Not Supported (Must rewrite) | **N/A** (Web uses different lib) |
+| **Web Performance** | Moderate (Runtime CSS) | Excellent (Static CSS) | Best (Native DOM) | **Best** (Native DOM) |
+| **SEO / Accessibility** | Poor (Divs) | Good (Semantic Tags) | Best (Semantic Tags) | **Best** (Semantic Tags) |
+| **Build Complexity** | Low (Vite/Webpack) | High (Custom Compilers) | High (AST Serializers) | **Low** (Standard Bundlers) |
 
 ### **Final Recommendation**
 
-For an existing React Native/Expo Storybook utilizing react-native-paper, **Strategy 1 (Runtime Adaptation via React Native for Web)** is the only viable option for rapid translation. It preserves the react-native-paper investment.  
-However, the team must acknowledge the performance ceiling of this approach. It is strongly recommended to pair this with **Unistyles** (Strategy 2\) for *new* components and iterative refactoring. This hybrid model leverages the ease of the shim for legacy code while building a high-performance, CSS-native future for the application via the Unistyles JSI engine. The implementation should be housed within a **Turborepo** to enforce strict boundary separation between the Native, Web, and UI concerns.
+For an existing React Native/Expo Storybook utilizing react-native-paper, **Strategy 1 (Runtime Adaptation via React Native for Web)** is the only viable option for rapid translation. It preserves the react-native-paper investment.
+
+However, the team must acknowledge the performance ceiling of this approach. It is strongly recommended to pair this with **Unistyles** (Strategy 2) for *new* components and iterative refactoring. This hybrid model leverages the ease of the shim for legacy code while building a high-performance, CSS-native future for the application via the Unistyles JSI engine.
+
+Additionally, for critical components where performance or SEO is paramount and `react-native-web` falls short, **Strategy 4 (Twin Components)** should be employed as a surgical intervention. This allows for native-quality web experiences without rewriting the entire library.
+
+The implementation should be housed within a **Turborepo** to enforce strict boundary separation between the Native, Web, and UI concerns.
 
 ---
 
-## **8. Strategic Recommendations for `av-ui-library` Evolution**
+## **8. Strategic Recommendations for av-ui-library Evolution**
 
-Beyond the web migration, the following recommendations address the architecture, organization, and scalability of the `av-ui-library` project itself.
+Beyond the web migration, the following recommendations address the architecture, organization, and scalability of the av-ui-library project itself.
 
 ### **8.1 Folder Structure & Organization**
 
 The current structure (`stories/Component/Component.jsx`) mixes source code with documentation. A more scalable "Package-Based" structure is recommended to separate concerns and facilitate future extraction.
 
 **Recommended Structure:**
+
 ```
 src/
   components/
@@ -316,6 +398,9 @@ stories/
 1.  **Strict TypeScript Adoption:** While `tsconfig.json` exists, many files are `.jsx`. Migrating to `.tsx` and enforcing strict typing for props (removing `prop-types`) will significantly reduce runtime errors and improve developer experience (IntelliSense).
 2.  **Testing Framework:** The current repo lacks a visible testing setup. Integrating **Jest** and **React Native Testing Library (RNTL)** is critical for preventing regressions during the web migration.
     *   *Action:* Add `jest.config.js` and write a basic snapshot test for `AVButton`.
+3.  **Visual Regression Testing (Chromatic):** The repository includes a `chromatic` script, which is excellent. To fully leverage this for migration, configure Chromatic to take snapshots in both **mobile** (simulating Native) and **desktop** (Web) viewports. This is the only automated way to catch if a CSS change for Web accidentally breaks the Native layout.
+4.  **Legacy Pattern Cleanup (Hoverable.js):** The repository contains `Hoverable.js` and `HoverState.js`, which manually attach event listeners to the DOM. This is a legacy pattern that causes performance issues ("zombie listeners").
+    *   *Action:* Deprecate `Hoverable.js`. Modern React Native Web supports hover natively via the `Pressable` component's `hoverStyle` prop, or via CSS if switching to Unistyles.
 
 ### **8.3 Best Practices & Quality**
 
@@ -325,8 +410,19 @@ stories/
 
 ### **8.4 Scalability**
 
-1.  **Build System:** Currently, the library seems to be consumed as source. To scale as a true library, it should be bundled.
-    *   *Recommendation:* Use **Rollup** or **Vite Library Mode** to bundle the `src` folder into CommonJS (CJS) and ES Modules (ESM) formats. This ensures consumers don't need to transpile your library code themselves.
+1.  **Build System & Package Distribution:** Currently, the library seems to be consumed as source. To scale as a true library, it should be bundled.
+    *   *Recommendation:* Use **Rollup** or **Vite Library Mode** to bundle the `src` folder into CommonJS (CJS) and ES Modules (ESM) formats.
+    *   *Conditional Exports:* Update `package.json` to implement **Conditional Exports**. This ensures consumers automatically get the correct file for their platform:
+
+```json
+"exports": {
+  ".": {
+    "react-native": "./dist/index.native.js",
+    "import": "./dist/index.web.js",
+    "require": "./dist/index.web.cjs"
+  }
+}
+```
 2.  **Monorepo Adoption:** As mentioned in the research, moving this repo into a **Turborepo** is the single best move for scalability. It allows you to have:
     *   `packages/ui` (This library)
     *   `apps/docs` (Storybook static build)
